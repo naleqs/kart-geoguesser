@@ -399,9 +399,9 @@
       if (!n) { m.visible = false; return; }
       const active = n === d.target || (d.target && n.id === d.target.id);
       m.visible = true;
-      m.position.copy(fwd(n.bearing).multiplyScalar(2.3 + Math.sin(d.time * 4) * 0.06)).setY(0.03);
+      m.position.copy(fwd(n.bearing).multiplyScalar(3.3 + Math.sin(d.time * 4) * 0.08)).setY(0.03);
       m.rotation.y = Math.PI - rad(n.bearing);
-      m.scale.setScalar(active ? 1.25 : 0.95);
+      m.scale.setScalar(active ? 1.6 : 1.2);
       m.material.color.set(active ? 0xffd23a : 0xffffff);
       m.material.opacity = lerp(m.material.opacity, active ? 0.95 : 0.55, Math.min(1, dt * 8));
     });

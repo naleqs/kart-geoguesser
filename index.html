@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kart GeoGuesser</title>
+  <link rel="icon" href="Jesus_Image_on_a_Manichaean_Temple_Banner.jpg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Nunito:wght@600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <canvas id="view"></canvas>
+
+  <!-- Loading -->
+  <section id="loading" class="screen center">
+    <img class="spinner big" src="Jesus_Image_on_a_Manichaean_Temple_Banner.jpg" alt="">
+    <p id="loading-text">Loading…</p>
+  </section>
+
+  <!-- ROM picker (only when the ROM can't be read from the folder) -->
+  <section id="rompick" class="screen center hidden">
+    <div class="panel">
+      <h2>Insert your cartridge</h2>
+      <p>Drop your <b>Mario Kart DS .nds</b> file here, or pick it. It stays in this browser and is never uploaded.</p>
+      <label class="btn">Choose .nds file<input id="rom-input" type="file" accept=".nds" hidden></label>
+    </div>
+  </section>
+
+  <!-- Menu / character select -->
+  <section id="menu" class="screen hidden">
+    <h1 class="logo">Kart <span>Geo</span>Guesser</h1>
+    <div class="select">
+      <button class="arrow" id="char-prev" aria-label="Previous character">◀</button>
+      <div class="select-info">
+        <div id="char-name" class="char-name">Mario</div>
+        <div id="kart-tabs" class="kart-tabs"></div>
+      </div>
+      <button class="arrow" id="char-next" aria-label="Next character">▶</button>
+    </div>
+    <div class="menu-bottom">
+      <button id="start" class="btn go">Start!</button>
+      <p class="hint">←/→ driver · ↑/↓ kart · Enter to start</p>
+    </div>
+  </section>
+
+  <!-- In-game HUD -->
+  <section id="hud" class="hidden">
+    <div class="hud-top">
+      <div class="pill" id="round">Round 1 / 5</div>
+      <div class="compass"><div id="compass-strip"></div><div class="compass-needle"></div></div>
+      <div class="pill" id="score">0 pts</div>
+    </div>
+    <img id="pano-loading" class="spinner small hidden" src="Jesus_Image_on_a_Manichaean_Temple_Banner.jpg" alt="">
+    <div id="toast" class="toast"></div>
+    <div class="speedo"><span id="speed">0</span><small>km/h</small></div>
+    <div class="controls-help">
+      <b>W/↑</b> drive · <b>S/↓</b> brake/reverse · <b>A/D</b> steer · <b>Space</b> hop · drag to look · <b>M</b> map · <b>N</b> sound
+    </div>
+    <div id="minimap-wrap" class="minimap-wrap">
+      <div id="minimap"></div>
+      <button id="guess" class="btn go" disabled>Place a pin</button>
+    </div>
+  </section>
+
+  <!-- Round result -->
+  <section id="result" class="screen hidden">
+    <div id="result-map"></div>
+    <div class="result-card panel">
+      <div id="result-place" class="place"></div>
+      <div id="result-dist" class="dist"></div>
+      <div class="bar"><div id="result-bar"></div></div>
+      <div id="result-points" class="points"></div>
+      <button id="next" class="btn go">Next round</button>
+    </div>
+  </section>
+
+  <!-- Final -->
+  <section id="final" class="screen center hidden">
+    <div class="panel">
+      <h2>Finish!</h2>
+      <div id="final-score" class="final-score"></div>
+      <ol id="final-list"></ol>
+      <button id="again" class="btn go">Race again</button>
+    </div>
+  </section>
+
+  <script src="js/vendor/three.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="js/nds.js"></script>
+  <script src="js/nsbmd.js"></script>
+  <script src="js/kart.js"></script>
+  <script src="js/rom.js"></script>
+  <script src="js/streets.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>

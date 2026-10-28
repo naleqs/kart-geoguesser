@@ -1,0 +1,7 @@
+# Never publish game files: each player loads their own ROM in the browser.
+*.nds
+*.zip
+Mario Kart DS*/
+# Local-only helpers
+debug.log
+debug.png

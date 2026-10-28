@@ -15,14 +15,19 @@
     });
   }
   async function cacheGet() {
-    try {
-      const db = await idb();
-      return await new Promise((resolve) => {
-        const r = db.transaction(STORE).objectStore(STORE).get('rom');
-        r.onsuccess = () => resolve(r.result || null);
-        r.onerror = () => resolve(null);
-      });
-    } catch (e) { return null; }
+    const read = (async () => {
+      try {
+        const db = await idb();
+        return await new Promise((resolve) => {
+          const r = db.transaction(STORE).objectStore(STORE).get('rom');
+          r.onsuccess = () => resolve(r.result || null);
+          r.onerror = () => resolve(null);
+        });
+      } catch (e) { return null; }
+    })();
+    // Some browsers (private windows, locked-down profiles) never answer; don't hang the page on it.
+    const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 2500));
+    return Promise.race([read, timeout]);
   }
   async function cachePut(buf) {
     try {

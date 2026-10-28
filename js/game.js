@@ -11,9 +11,9 @@
   const fwd = (deg) => new THREE.Vector3(Math.sin(rad(deg)), 0, -Math.cos(rad(deg)));
 
   const ROUNDS = 5;
-  const MAX_SPEED = 16; // m/s
+  const MAX_SPEED = 13; // m/s (kept modest so photo downloads keep up)
   const SPHERE_R = 60;
-  const KART_LEN = 1.7;
+  const KART_LEN = 1.5;
   const KART_LABELS = ['Standard', 'Kart 2', 'Kart 3'];
 
   // ---------- renderer ----------
@@ -30,7 +30,7 @@
 
   let factory = null;
   const state = {
-    screen: 'loading', charIdx: 0, kartIdx: 0, round: 0, total: 0, results: [],
+    screen: 'loading', charIdx: 0, kartIdx: 0, round: 0, total: 0, results: [], usedCapitals: [],
     muted: false,
   };
   const keys = {};
@@ -178,10 +178,31 @@
   kartHolder.add(shadow, kartBody);
   gameScene.add(kartHolder);
 
+  // Ground arrows showing which roads you can take from here.
+  const arrowGroup = new THREE.Group();
+  gameScene.add(arrowGroup);
+  const arrowGeo = (() => {
+    const s = new THREE.Shape();
+    s.moveTo(0, 0.42); s.lineTo(0.42, -0.05); s.lineTo(0.26, -0.2); s.lineTo(0, 0.1);
+    s.lineTo(-0.26, -0.2); s.lineTo(-0.42, -0.05); s.closePath();
+    const g = new THREE.ShapeGeometry(s);
+    g.rotateX(-Math.PI / 2); // lie flat, pointing towards -Z
+    g.rotateY(Math.PI); // point towards +Z like the kart
+    return g;
+  })();
+  const arrows = [];
+  for (let i = 0; i < 8; i++) {
+    const m = new THREE.Mesh(arrowGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false }));
+    m.renderOrder = 1;
+    m.visible = false;
+    arrowGroup.add(m);
+    arrows.push(m);
+  }
+
   const drive = {
     pano: null, neighbors: [], neighborsReady: false,
-    heading: 0, camYaw: 0, lookYaw: 0, lookPitch: 0, dragging: false,
-    v: 0, steer: 0, travel: 0, travelVis: 0, target: null,
+    heading: 0, camYaw: 0, lookYaw: 0, lookYawTarget: 0, lookPitch: 0, lookPitchTarget: 0, dragging: false, lastDrag: -10,
+    v: 0, steer: 0, steerVel: 0, roadBearing: null, travel: 0, travelVis: 0, target: null,
     hopY: 0, hopV: 0, fade: 0, bump: 0, lastToast: 0, time: 0,
   };
   const ready = new Map(); // pano id -> { promise, item, img }
@@ -274,19 +295,25 @@
     else if (down && !mapFocused) d.v = d.v > 0.3 ? d.v - 22 * dt : Math.max(-5, d.v - 6 * dt);
     else d.v -= Math.sign(d.v) * Math.min(Math.abs(d.v), 5 * dt);
 
-    // Steering (allowed at standstill so you can look around the spot).
+    // Steering ramps in and out instead of snapping (allowed at standstill so you can look around).
     const s = mapFocused ? 0 : (right ? 1 : 0) - (left ? 1 : 0);
-    const turn = Math.abs(d.v) > 0.5 ? 80 : 65;
-    d.heading = (d.heading + s * turn * dt * (d.v < -0.3 ? -1 : 1) + 360) % 360;
-    d.steer = lerp(d.steer, s, Math.min(1, dt * 8));
+    const turn = Math.abs(d.v) > 0.5 ? 70 : 55;
+    d.steerVel = lerp(d.steerVel, s * turn * (d.v < -0.3 ? -1 : 1), Math.min(1, dt * (s ? 5 : 7)));
+    d.heading = (d.heading + d.steerVel * dt + 360) % 360;
+    d.steer = lerp(d.steer, s, Math.min(1, dt * 6));
 
     // Travel toward the neighbour panorama in the driving direction.
     const dir = d.v >= 0 ? d.heading : (d.heading + 180) % 360;
     if (d.target && angDiff(d.target.bearing, dir) > coneFor(d.target) + 20) d.target = null;
-    // Steering assist: without input, gently follow the road we're heading down.
-    if (d.target && !s && d.v > 1 && d.target.dist >= 4) {
-      const diff = ((d.target.bearing - dir + 540) % 360) - 180;
-      if (Math.abs(diff) < 60) d.heading = (d.heading + Math.sign(diff) * Math.min(Math.abs(diff), 30 * dt) + 360) % 360;
+    // Steering assist: without input, ease towards a smoothed road direction (raw GPS bearings jitter).
+    if (d.target && d.target.dist >= 3) {
+      if (d.roadBearing === null) d.roadBearing = d.target.bearing;
+      const rd = ((d.target.bearing - d.roadBearing + 540) % 360) - 180;
+      d.roadBearing = (d.roadBearing + rd * Math.min(1, dt * 1.5) + 360) % 360;
+    }
+    if (d.target && d.roadBearing !== null && !s && d.v > 1) {
+      const diff = ((d.roadBearing - dir + 540) % 360) - 180;
+      if (Math.abs(diff) < 50) d.heading = (d.heading + diff * Math.min(1, dt * 0.9) + 360) % 360;
     }
     if (!d.target || d.travel < 0.5) {
       const t = pickTarget(dir);
@@ -320,7 +347,8 @@
       }
     }
     $('pano-loading').classList.toggle('hidden', !waiting && d.neighborsReady);
-    d.travelVis = lerp(d.travelVis, d.target ? d.travel * 0.75 : 0, Math.min(1, dt * 10));
+    // A gentle slide through the current photo; large slides warp the sphere and pop on arrival.
+    d.travelVis = lerp(d.travelVis, d.target ? Math.min(d.travel, 8) * 0.45 : 0, Math.min(1, dt * 6));
 
     // Hop.
     if (d.hopY > 0 || d.hopV > 0) {
@@ -330,34 +358,57 @@
     }
     d.bump = Math.max(0, d.bump - dt * 3);
 
-    // Camera follows heading; dragging adds a look offset that eases back while driving.
-    if (!d.dragging && Math.abs(d.v) > 1) { d.lookYaw = lerp(d.lookYaw, 0, Math.min(1, dt * 2)); d.lookPitch = lerp(d.lookPitch, 0, Math.min(1, dt * 2)); }
-    const camDelta = ((d.heading - d.camYaw + 540) % 360) - 180;
-    d.camYaw = (d.camYaw + camDelta * Math.min(1, dt * 6) + 360) % 360;
+    // Look offset from dragging eases in, and drifts back once you've been driving a moment without dragging.
+    if (!d.dragging && Math.abs(d.v) > 1 && d.time - d.lastDrag > 1.2) {
+      d.lookYawTarget = lerp(d.lookYawTarget, 0, Math.min(1, dt * 1.2));
+      d.lookPitchTarget = lerp(d.lookPitchTarget, 0, Math.min(1, dt * 1.2));
+    }
+    d.lookYaw = lerp(d.lookYaw, d.lookYawTarget, Math.min(1, dt * 12));
+    d.lookPitch = lerp(d.lookPitch, d.lookPitchTarget, Math.min(1, dt * 12));
+
+    // Chase camera trails the kart's heading on a soft spring, never lagging more than 40°.
+    let camDelta = ((d.heading - d.camYaw + 540) % 360) - 180;
+    if (Math.abs(camDelta) > 40) { d.camYaw = (d.heading - Math.sign(camDelta) * 40 + 360) % 360; camDelta = Math.sign(camDelta) * 40; }
+    d.camYaw = (d.camYaw + camDelta * Math.min(1, dt * 3) + 360) % 360;
     const yaw = d.camYaw + d.lookYaw;
     const f = fwd(yaw);
-    const camPos = f.clone().multiplyScalar(-2.7).add(new THREE.Vector3(0, 1.25, 0));
+    const camPos = f.clone().multiplyScalar(-3.1).add(new THREE.Vector3(0, 1.6, 0));
     gameCam.position.copy(camPos);
-    const look = f.clone().multiplyScalar(3).add(new THREE.Vector3(0, 0.6 + d.lookPitch * 0.06, 0));
+    const look = f.clone().multiplyScalar(6).add(new THREE.Vector3(0, 0.75 + d.lookPitch * 0.12, 0));
     gameCam.lookAt(look);
-    gameCam.fov = lerp(gameCam.fov, 70 + Math.abs(d.v) * 0.6, Math.min(1, dt * 4));
+    gameCam.fov = lerp(gameCam.fov, 70 + Math.abs(d.v) * 0.3, Math.min(1, dt * 2));
     gameCam.updateProjectionMatrix();
 
     // Spheres: eye at centre, shifted backwards as we travel to fake forward motion.
     const travelOff = d.target ? fwd(d.target.bearing).multiplyScalar(d.travelVis) : new THREE.Vector3();
     sphereCur.position.copy(camPos).sub(travelOff);
     if (spherePrev.visible) {
-      d.fade = Math.max(0, d.fade - dt * 3.5);
-      spherePrev.material.opacity = d.fade;
-      const off = (spherePrev.userData.offset || new THREE.Vector3()).clone().multiplyScalar(1 + (1 - d.fade) * 0.6);
+      d.fade = Math.max(0, d.fade - dt * 2.2);
+      const k = d.fade * d.fade * (3 - 2 * d.fade); // smoothstep
+      spherePrev.material.opacity = k;
+      const off = (spherePrev.userData.offset || new THREE.Vector3()).clone().multiplyScalar(1 + (1 - k) * 0.5);
       spherePrev.position.copy(camPos).sub(off);
       if (d.fade <= 0) spherePrev.visible = false;
     }
     sphereCur.material.opacity = 1;
 
+    // Road arrows: every option in white, the one you're heading for in yellow.
+    const opts = d.neighbors.slice(0, arrows.length);
+    arrows.forEach((m, i) => {
+      const n = opts[i];
+      if (!n) { m.visible = false; return; }
+      const active = n === d.target || (d.target && n.id === d.target.id);
+      m.visible = true;
+      m.position.copy(fwd(n.bearing).multiplyScalar(2.3 + Math.sin(d.time * 4) * 0.06)).setY(0.03);
+      m.rotation.y = Math.PI - rad(n.bearing);
+      m.scale.setScalar(active ? 1.25 : 0.95);
+      m.material.color.set(active ? 0xffd23a : 0xffffff);
+      m.material.opacity = lerp(m.material.opacity, active ? 0.95 : 0.55, Math.min(1, dt * 8));
+    });
+
     // Kart.
-    kartHolder.rotation.y = Math.PI - rad(d.heading) - d.steer * 0.25;
-    const bob = Math.sin(d.time * 26) * 0.012 * Math.min(1, Math.abs(d.v) / 4);
+    kartHolder.rotation.y = Math.PI - rad(d.heading) - d.steer * 0.2;
+    const bob = Math.sin(d.time * 22) * 0.008 * Math.min(1, Math.abs(d.v) / 4);
     kartBody.position.y = d.hopY + bob + Math.sin(d.bump * Math.PI) * 0.08;
     kartBody.rotation.z = -d.steer * 0.06 * Math.min(1, Math.abs(d.v) / 6);
     kartBody.rotation.x = -d.bump * 0.15;
@@ -395,8 +446,9 @@
   });
   canvas.addEventListener('pointermove', (e) => {
     if (!drive.dragging) return;
-    drive.lookYaw -= e.movementX * 0.25;
-    drive.lookPitch = Math.max(-10, Math.min(10, drive.lookPitch - e.movementY * 0.08));
+    drive.lookYawTarget -= e.movementX * 0.22;
+    drive.lookPitchTarget = Math.max(-8, Math.min(8, drive.lookPitchTarget - e.movementY * 0.06));
+    drive.lastDrag = drive.time;
   });
   const endDrag = () => { drive.dragging = false; };
   canvas.addEventListener('pointerup', endDrag);
@@ -429,8 +481,9 @@
   }
 
   // ---------- maps ----------
-  const tileUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-  const tileOpts = { maxZoom: 18, attribution: '&copy; OpenStreetMap contributors' };
+  // Esri's street map labels places in English worldwide (OSM's default tiles use local scripts).
+  const tileUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}';
+  const tileOpts = { maxZoom: 18, attribution: 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, OpenStreetMap contributors' };
   const pinIcon = (cls) => L.divIcon({ className: '', html: '<div class="pin ' + cls + '"></div>', iconSize: [22, 22], iconAnchor: [11, 11] });
   let minimap = null, guessMarker = null, resultMap = null;
   function ensureMinimap() {
@@ -461,6 +514,7 @@
     state.round = 0;
     state.total = 0;
     state.results = [];
+    state.usedCapitals = [];
     kartBody.clear();
     kartBody.add(currentKart());
     resetKartPose(currentKart());
@@ -475,7 +529,8 @@
     let pano = null, img = null;
     for (let tries = 0; tries < 6 && !img; tries++) {
       try {
-        pano = await Streets.randomLocation((n, region) => setLoading('Scouting ' + region + '…'));
+        // Keep the city secret: the loading text never names it.
+        pano = await Streets.randomLocation((n) => setLoading(n ? 'Still looking for a good street…' : 'Driving to a capital city…'), state.usedCapitals);
         img = await Streets.loadImage(pano.image);
       } catch (e) {
         console.warn(e);
@@ -483,8 +538,9 @@
         if (tries === 5) { setLoading('Could not load street imagery: ' + e.message); return; }
       }
     }
+    state.usedCapitals.push(pano.capital.name);
     const d = drive;
-    Object.assign(d, { v: 0, steer: 0, travel: 0, travelVis: 0, target: null, lookYaw: 0, lookPitch: 0, hopY: 0, hopV: 0, fade: 0, bump: 0 });
+    Object.assign(d, { v: 0, steer: 0, steerVel: 0, roadBearing: null, travel: 0, travelVis: 0, target: null, lookYaw: 0, lookYawTarget: 0, lookPitch: 0, lookPitchTarget: 0, hopY: 0, hopV: 0, fade: 0, bump: 0 });
     spherePrev.visible = false;
     sphereCur.material.map = null;
     d.heading = pano.links.length ? Streets.bearing(pano, pano.links.find((l) => l.rel === 'next') || pano.links[0]) : pano.azimuth;
@@ -517,7 +573,8 @@
     const km = Streets.distance({ lat: g.lat, lon: g.lng }, here) / 1000;
     const pts = scoreFor(km);
     state.total += pts;
-    const entry = { km, pts, place: '' };
+    const cap = drive.start.capital;
+    const entry = { km, pts, place: cap.name + ', ' + cap.country };
     state.results.push(entry);
 
     hide('hud');
@@ -539,14 +596,7 @@
     $('result-bar').style.width = '0';
     setTimeout(() => { $('result-bar').style.width = (pts / 50) + '%'; }, 60);
     $('next').textContent = state.round >= ROUNDS ? 'See results' : 'Next round';
-    $('result-place').textContent = '';
-    try {
-      const r = await fetch('https://nominatim.openstreetmap.org/reverse?format=json&zoom=10&accept-language=en&lat=' + here.lat + '&lon=' + here.lon);
-      const j = await r.json();
-      const a = j.address || {};
-      entry.place = [a.city || a.town || a.village || a.county || a.state, a.country].filter(Boolean).join(', ');
-    } catch (e) { entry.place = ''; }
-    if (state.screen === 'result') $('result-place').textContent = entry.place ? 'You were in ' + entry.place : '';
+    $('result-place').textContent = 'You were in ' + entry.place;
   }
 
   $('next').onclick = () => {

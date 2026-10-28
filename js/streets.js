@@ -5,21 +5,19 @@
   const API = 'https://api.panoramax.xyz/api';
   const FILTER = 'filter=' + encodeURIComponent('field_of_view=360');
 
-  // Regions with known 360° coverage. bbox = [west, south, east, north].
-  const REGIONS = [
-    { name: 'France', bbox: [-4.8, 42.4, 8.2, 51.1], w: 4 },
-    { name: 'Germany', bbox: [5.9, 47.3, 15.0, 55.0], w: 3 },
-    { name: 'Iberia', bbox: [-9.5, 36.0, 3.3, 43.8], w: 2 },
-    { name: 'Italy', bbox: [6.6, 36.6, 18.5, 47.0], w: 2 },
-    { name: 'Britain', bbox: [-8.0, 50.0, 1.8, 58.6], w: 1.5 },
-    { name: 'Benelux', bbox: [2.5, 49.5, 7.2, 53.5], w: 1.5 },
-    { name: 'Central Europe', bbox: [12.0, 45.8, 24.0, 55.0], w: 2 },
-    { name: 'Nordics', bbox: [5.0, 55.0, 31.0, 70.0], w: 1.5 },
-    { name: 'Japan', bbox: [129.0, 31.0, 146.0, 45.0], w: 2 },
-    { name: 'Brazil', bbox: [-74.0, -34.0, -35.0, 5.0], w: 1.5 },
-    { name: 'Australia', bbox: [112.0, -44.0, 154.0, -10.0], w: 1.5 },
-    { name: 'Levant', bbox: [34.0, 29.0, 36.0, 33.4], w: 0.7 },
-  ];
+  // Capital cities with linked 360° Panoramax coverage (checked October 2026).
+  const CAPITALS = [
+    ['Paris', 'France', 48.8566, 2.3522], ['Berlin', 'Germany', 52.52, 13.405], ['Madrid', 'Spain', 40.4168, -3.7038],
+    ['Lisbon', 'Portugal', 38.7223, -9.1393], ['London', 'United Kingdom', 51.5074, -0.1278], ['Dublin', 'Ireland', 53.3498, -6.2603],
+    ['Brussels', 'Belgium', 50.8503, 4.3517], ['Amsterdam', 'Netherlands', 52.3676, 4.9041], ['Luxembourg', 'Luxembourg', 49.6116, 6.1319],
+    ['Vienna', 'Austria', 48.2082, 16.3738], ['Prague', 'Czechia', 50.0755, 14.4378], ['Bratislava', 'Slovakia', 48.1486, 17.1077],
+    ['Budapest', 'Hungary', 47.4979, 19.0402], ['Zagreb', 'Croatia', 45.815, 15.9819], ['Belgrade', 'Serbia', 44.7866, 20.4489],
+    ['Podgorica', 'Montenegro', 42.4304, 19.2594], ['Kyiv', 'Ukraine', 50.4501, 30.5234], ['Helsinki', 'Finland', 60.1699, 24.9384],
+    ['Stockholm', 'Sweden', 59.3293, 18.0686], ['Oslo', 'Norway', 59.9139, 10.7522], ['Copenhagen', 'Denmark', 55.6761, 12.5683],
+    ['Andorra la Vella', 'Andorra', 42.5063, 1.5218], ['Monaco', 'Monaco', 43.7384, 7.4246], ['Tokyo', 'Japan', 35.6762, 139.6503],
+    ['Taipei', 'Taiwan', 25.033, 121.5654], ['Kathmandu', 'Nepal', 27.7172, 85.324], ['Wellington', 'New Zealand', -41.2865, 174.7762],
+    ['Buenos Aires', 'Argentina', -34.6037, -58.3816], ['Brasília', 'Brazil', -15.7975, -47.8919],
+  ].map(([name, country, lat, lon]) => ({ name, country, lat, lon }));
 
   const R = 6371000;
   const rad = (d) => (d * Math.PI) / 180;
@@ -74,28 +72,24 @@
     return (j.features || []).filter((f) => f.geometry && f.assets).map(normalize);
   }
 
-  function pickRegion() {
-    const total = REGIONS.reduce((s, r) => s + r.w, 0);
-    let x = Math.random() * total;
-    for (const r of REGIONS) { x -= r.w; if (x <= 0) return r; }
-    return REGIONS[0];
-  }
-
-  // Finds a random 360° panorama somewhere in the covered regions.
-  async function randomLocation(onAttempt) {
+  // Finds a random 360° panorama in or around a capital city. `exclude` holds capital names already used this game.
+  async function randomLocation(onAttempt, exclude = []) {
     for (let attempt = 0; attempt < 14; attempt++) {
-      const reg = pickRegion();
-      const [w, s, e, n] = reg.bbox;
-      const lon = w + Math.random() * (e - w), lat = s + Math.random() * (n - s);
-      if (onAttempt) onAttempt(attempt, reg.name);
-      for (const half of [0.15, 0.8, 3]) {
-        const box = [Math.max(w, lon - half), Math.max(s, lat - half), Math.min(e, lon + half), Math.min(n, lat + half)];
+      let pool = CAPITALS.filter((c) => !exclude.includes(c.name));
+      if (!pool.length) pool = CAPITALS;
+      const cap = pool[Math.floor(Math.random() * pool.length)];
+      // Start somewhere around town rather than always at the exact centre.
+      const lat = cap.lat + (Math.random() - 0.5) * 0.06, lon = cap.lon + (Math.random() - 0.5) * 0.08;
+      if (onAttempt) onAttempt(attempt, cap);
+      for (const half of [0.02, 0.06, 0.15, 0.3]) {
+        const box = [lon - half, lat - half, lon + half, lat + half];
         let res;
         try { res = await search(box, 40); } catch (err) { console.warn(err); continue; }
         const good = res.filter((p) => p.image && p.links.length);
         if (good.length) {
           const pick = good[Math.floor(Math.random() * good.length)];
           itemCache.set(pick.collection + '/' + pick.id, Promise.resolve(pick));
+          pick.capital = cap;
           return pick;
         }
       }
@@ -160,5 +154,5 @@
     return p;
   }
 
-  global.Streets = { randomLocation, getItem, neighbors, linkNeighbors, loadImage, distance, bearing, REGIONS };
+  global.Streets = { randomLocation, getItem, neighbors, linkNeighbors, loadImage, distance, bearing, CAPITALS };
 })(typeof window !== 'undefined' ? window : globalThis);

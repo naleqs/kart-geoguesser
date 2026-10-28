@@ -13,6 +13,11 @@
 <body>
   <canvas id="view"></canvas>
 
+  <div class="sound-controls">
+    <button id="skip" class="sound-btn" aria-label="Next song" title="Next song">⏭</button>
+    <button id="mute" class="sound-btn" aria-label="Mute" title="Mute (N)">🔊</button>
+  </div>
+
   <!-- Loading -->
   <section id="loading" class="screen center">
     <img class="spinner big" src="Jesus_Image_on_a_Manichaean_Temple_Banner.jpg" alt="">
@@ -56,7 +61,7 @@
     <div id="toast" class="toast"></div>
     <div class="speedo"><span id="speed">0</span><small>km/h</small></div>
     <div class="controls-help">
-      <b>W/↑</b> drive · <b>S/↓</b> brake/reverse · <b>A/D</b> steer · <b>Space</b> hop · drag to look · <b>M</b> map · <b>N</b> sound
+      <b>W/↑</b> drive · <b>S/↓</b> brake/reverse · <b>A/D</b> steer · <b>Space</b> hop · drag to look · <b>M</b> map · <b>N</b> mute
     </div>
     <div id="minimap-wrap" class="minimap-wrap">
       <div id="minimap"></div>
@@ -93,6 +98,7 @@
   <script src="js/kart.js"></script>
   <script src="js/rom.js"></script>
   <script src="js/streets.js"></script>
+  <script src="js/sdat.js"></script>
   <script src="js/game.js"></script>
 </body>
 </html>

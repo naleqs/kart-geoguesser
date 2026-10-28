@@ -133,6 +133,7 @@
   }
   function enterMenu() {
     state.screen = 'menu';
+    syncMusic();
     ['loading', 'rompick', 'hud', 'result', 'final'].forEach(hide);
     show('menu');
     refreshMenuKart();
@@ -454,25 +455,81 @@
   canvas.addEventListener('pointerup', endDrag);
   canvas.addEventListener('pointercancel', endDrag);
 
-  // ---------- engine sound ----------
+  // ---------- sound: ROM music + engine ----------
   let audio = null;
+  const RACE_TRACKS = []; // looping course themes, filled from the ROM
+  const MENU_TRACK = 0; // the archive's first sequence: a big looping theme
   function initAudio() {
     if (audio) return;
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const master = ctx.createGain();
+      master.gain.value = state.muted ? 0 : 1;
+      master.connect(ctx.destination);
       const osc = ctx.createOscillator(), osc2 = ctx.createOscillator();
       const filter = ctx.createBiquadFilter(), gain = ctx.createGain();
       osc.type = 'sawtooth'; osc2.type = 'square';
       filter.type = 'lowpass'; filter.frequency.value = 600;
       gain.gain.value = 0;
-      osc.connect(filter); osc2.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
+      osc.connect(filter); osc2.connect(filter); filter.connect(gain); gain.connect(master);
       osc.start(); osc2.start();
-      audio = { ctx, osc, osc2, gain, filter };
-    } catch (e) { audio = null; }
+      const musicGain = ctx.createGain();
+      musicGain.gain.value = 0.7;
+      musicGain.connect(master);
+      audio = { ctx, master, osc, osc2, gain, filter, musicGain, music: null };
+      syncMusic();
+    } catch (e) { console.warn('Audio unavailable', e); audio = null; }
   }
+  // The music player needs the ROM, which may arrive after the first click.
+  function ensureMusic() {
+    if (!audio || audio.music || !factory) return !!(audio && audio.music);
+    const sdatFile = factory.rom.files.get('data/Sound/sound_data.sdat');
+    if (!sdatFile) return false;
+    try {
+      audio.music = new SDAT.Player(SDAT.parseSDAT(sdatFile), audio.ctx, audio.musicGain);
+      for (let id = 15; id <= 45; id++) RACE_TRACKS.push(id);
+    } catch (e) { console.warn('Music unavailable', e); return false; }
+    return true;
+  }
+  let currentTrack = null;
+  function playTrack(id) {
+    if (!ensureMusic() || currentTrack === id) return;
+    currentTrack = id;
+    try { audio.music.play(id); } catch (e) { console.warn('Music failed', e); }
+  }
+  function randomRaceTrack() {
+    const pool = RACE_TRACKS.filter((t) => t !== currentTrack);
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+  // Menu and final screens get the title theme; each round gets a course theme.
+  function syncMusic() {
+    if (!audio) return;
+    if (state.screen === 'menu' || state.screen === 'final') playTrack(MENU_TRACK);
+    else if (state.screen === 'game' && (currentTrack === null || currentTrack === MENU_TRACK)) playTrack(randomRaceTrack());
+  }
+  function skipTrack() {
+    initAudio();
+    if (!ensureMusic()) return;
+    playTrack(state.screen === 'menu' || state.screen === 'final'
+      ? RACE_TRACKS[Math.floor(Math.random() * RACE_TRACKS.length)]
+      : randomRaceTrack());
+  }
+  function setMuted(m) {
+    state.muted = m;
+    try { localStorage.setItem('kgg-muted', m ? '1' : '0'); } catch (e) { /* storage optional */ }
+    $('mute').textContent = m ? '🔇' : '🔊';
+    $('mute').setAttribute('aria-label', m ? 'Unmute' : 'Mute');
+    if (audio) audio.master.gain.setTargetAtTime(m ? 0 : 1, audio.ctx.currentTime, 0.05);
+  }
+  try { state.muted = localStorage.getItem('kgg-muted') === '1'; } catch (e) { /* storage optional */ }
+  setMuted(state.muted);
+  $('mute').onclick = (e) => { e.stopPropagation(); initAudio(); setMuted(!state.muted); };
+  $('skip').onclick = (e) => { e.stopPropagation(); skipTrack(); };
+  window.addEventListener('pointerdown', () => { initAudio(); if (audio && audio.ctx.state === 'suspended') audio.ctx.resume(); });
+
   function updateEngine(v) {
     if (!audio) return;
-    const on = state.screen === 'game' && !state.muted && !document.hidden;
+    const on = state.screen === 'game' && !document.hidden;
     const t = audio.ctx.currentTime;
     audio.osc.frequency.setTargetAtTime(48 + v * 7, t, 0.08);
     audio.osc2.frequency.setTargetAtTime(24 + v * 3.5, t, 0.08);
@@ -560,6 +617,7 @@
     minimap.setView([25, 10], 1);
     setTimeout(() => minimap.invalidateSize(), 50);
     state.screen = 'game';
+    if (audio) { currentTrack = null; playTrack(randomRaceTrack()); }
     toast('GO!');
   }
 
@@ -606,6 +664,7 @@
 
   function showFinal() {
     state.screen = 'final';
+    syncMusic();
     hide('result');
     show('final');
     $('final-score').textContent = state.total.toLocaleString() + ' pts';
@@ -628,7 +687,7 @@
     } else if (state.screen === 'game') {
       if (e.code === 'Space' && drive.hopY === 0) { drive.hopV = 4.5; e.preventDefault(); }
       else if (e.code === 'KeyM') toggleMap();
-      else if (e.code === 'KeyN') { state.muted = !state.muted; toast(state.muted ? 'Sound off' : 'Sound on'); }
+      else if (e.code === 'KeyN') { setMuted(!state.muted); toast(state.muted ? 'Sound off' : 'Sound on'); }
       else if (e.code === 'Enter' && guessMarker) submitGuess();
       if (e.code.startsWith('Arrow')) e.preventDefault();
     } else if (state.screen === 'result' && (e.code === 'Enter' || e.code === 'Space')) {
@@ -694,5 +753,8 @@
   boot();
 
   // Exposed for debugging in the console.
-  window.KartGeo = { state, drive, keys, startGame, submitGuess, renderer };
+  window.KartGeo = {
+    state, drive, keys, startGame, submitGuess, renderer,
+    audioState: () => audio && { ctx: audio.ctx.state, master: +audio.master.gain.value.toFixed(2), track: currentTrack, playing: audio.music && audio.music.playing, voices: audio.music ? audio.music.voices.size : 0 },
+  };
 })();
